@@ -1,10 +1,12 @@
+#import os
+#os.chdir(r"C:\Users\Ajinkya\Documents\Options-Pricing-Project")
+#exec(open('options-pricing-draft.py').read())
+
 #Imports
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
-from torchvision import datasets
-from torchvision.transforms import ToTensor
 from py_vollib.black_scholes import black_scholes
 from random import uniform
 import numpy as np
@@ -30,6 +32,7 @@ mat_times = (mat_times - mat_times.mean())/mat_times.std()
 vols = (vols - vols.mean())/vols.std()
 int_rates = (int_rates - int_rates.mean())/int_rates.std()
 
+#Defines a dataset as used by the model training algorithm
 class OptionsDataset(Dataset):
     def __init__(self, training_set):
         if training_set:
@@ -52,8 +55,7 @@ class OptionsDataset(Dataset):
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        #self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
+        self.network_stack = nn.Sequential(
             nn.Linear(5, 128),
             nn.ReLU(),
             nn.Linear(128, 128),
@@ -62,8 +64,7 @@ class NeuralNetwork(nn.Module):
         )
 
     def forward(self, x):
-        #x = self.flatten(x)
-        logits = self.linear_relu_stack(x)
+        logits = self.network_stack(x)
         return logits
 
 #Function which executes one training epoch
@@ -82,6 +83,8 @@ def train_loop(dataloader, model, loss_fn, optimizer):
         optimizer.zero_grad()
 
         if batch % 100 == 0:
+            #"loss" is value of loss function for latest batch
+            #"current" is the total number of samples used so far
             loss, current = loss.item(), batch * batch_size + len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
@@ -96,7 +99,8 @@ def test_loop(dataloader, model, loss_fn):
     with torch.no_grad():
         for X, y in dataloader:
             pred = model(X)
-            test_loss += loss_fn(pred, y).item()
+            test_loss += loss_fn(pred, y).item() #Add up loss function values for each batch
+            #Add the number of correct estimations for each batch
             correct += sum([1 if (0.99*yval < mval < 1.01*yval) else 0 for (yval, mval) in zip(y, pred)])
 
     test_loss /= num_batches
@@ -106,9 +110,9 @@ def test_loop(dataloader, model, loss_fn):
 #Main script
 model = NeuralNetwork()
 model.double()
-learning_rate = 1e-3
+learning_rate = 1e-4
 batch_size = 64
-epochs = 10
+epochs = 500
 training_data = OptionsDataset(True)
 test_data = OptionsDataset(False)
 train_dataloader = DataLoader(training_data, batch_size=batch_size)
