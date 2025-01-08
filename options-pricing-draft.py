@@ -1,6 +1,4 @@
-#import os
-#os.chdir(r"C:\Users\Ajinkya\Documents\Options-Pricing-Project")
-#exec(open('options-pricing-draft.py').read())
+#nohup ~/BTS-Work/bin/python3 options-pricing-draft.py > training_log 2>&1 &
 
 #Imports
 import torch
@@ -10,9 +8,11 @@ from torch.utils.data import Dataset
 from py_vollib.black_scholes import black_scholes
 from random import uniform
 import numpy as np
+import pickle
+import sys
 
 #Option parameters
-num_samples = 2100
+num_samples = 35000
 test_ratio = 1/7
 spots = np.array([uniform(10, 500) for p in range(0, num_samples)])
 strikes = np.array([uniform(0.6*spots[p], 1.1*spots[p]) for p in range(0, num_samples)])
@@ -20,17 +20,51 @@ mat_times = np.array([uniform(0.01, 2) for p in range(0, num_samples)])
 vols = np.array([uniform(0.1, 0.2) for p in range(0, num_samples)])
 int_rates = np.array([uniform(0.05, 0.20) for p in range(0, num_samples)])
 
-#Black-Scholes option prices
+#Calculate Black-Scholes option prices
 call_prices = []
 for i in range(0, num_samples):
 	call_prices.append(black_scholes('c', spots[i], strikes[i], mat_times[i], int_rates[i], vols[i]))
 
+#Calculate means
+spots_mean = spots.mean()
+strikes_mean = strikes.mean()
+mat_times_mean = mat_times.mean()
+vols_mean = vols.mean()
+int_rates_mean = int_rates.mean()
+
+#Calculate standard deviations
+spots_std = spots.std()
+strikes_std = strikes.std()
+mat_times_std = mat_times.std()
+vols_std = vols.std()
+int_rates_std = int_rates.std()
+
 #Normalize data
-spots = (spots - spots.mean())/spots.std()
-strikes = (strikes - strikes.mean())/strikes.std()
-mat_times = (mat_times - mat_times.mean())/mat_times.std()
-vols = (vols - vols.mean())/vols.std()
-int_rates = (int_rates - int_rates.mean())/int_rates.std()
+spots = (spots - spots_mean)/spots_std
+strikes = (strikes - strikes_mean)/strikes_std
+mat_times = (mat_times - mat_times_mean)/mat_times_std
+vols = (vols - vols_mean)/vols_std
+int_rates = (int_rates - int_rates_mean)/int_rates_std
+
+#Save dataset
+dataset_out = {}
+dataset_out['spots'] = spots
+dataset_out['strikes'] = strikes
+dataset_out['mat_times'] = mat_times
+dataset_out['vols'] = vols
+dataset_out['int_rates'] = int_rates
+dataset_out['spots_mean'] = spots_mean
+dataset_out['strikes_mean'] = strikes_mean
+dataset_out['mat_times_mean'] = mat_times_mean
+dataset_out['vols_mean'] = vols_mean
+dataset_out['int_rates_mean'] = int_rates_mean
+dataset_out['spots_std'] = spots_std
+dataset_out['strikes_std'] = strikes_std
+dataset_out['mat_times_std'] = mat_times_std
+dataset_out['vols_std'] = vols_std
+dataset_out['int_rates_std'] = int_rates_std
+with open('Black-Sch-Data.pkl', 'wb') as file: 
+          pickle.dump(dataset_out, file) 
 
 #Defines a dataset as used by the model training algorithm
 class OptionsDataset(Dataset):
@@ -57,9 +91,9 @@ class NeuralNetwork(nn.Module):
         super().__init__()
         self.network_stack = nn.Sequential(
             nn.Linear(5, 128),
-            nn.ReLU(),
+            nn.Softmax(dim = 1),
             nn.Linear(128, 128),
-            nn.ReLU(),
+            nn.Softmax(dim = 1),
             nn.Linear(128, 1),
         )
 
@@ -72,6 +106,7 @@ def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     # Set the model to training mode
     model.train()
+
     for batch, (X, y) in enumerate(dataloader):
         # Compute prediction and loss
         pred = model(X)
@@ -81,12 +116,6 @@ def train_loop(dataloader, model, loss_fn, optimizer):
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-
-        if batch % 100 == 0:
-            #"loss" is value of loss function for latest batch
-            #"current" is the total number of samples used so far
-            loss, current = loss.item(), batch * batch_size + len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 #Function which evaluates current accuracy of model
 def test_loop(dataloader, model, loss_fn):
@@ -99,29 +128,39 @@ def test_loop(dataloader, model, loss_fn):
     with torch.no_grad():
         for X, y in dataloader:
             pred = model(X)
-            test_loss += loss_fn(pred, y).item() #Add up loss function values for each batch
+            #Add up loss function values for each batch
+            test_loss += loss_fn(pred, y).item() 
             #Add the number of correct estimations for each batch
             correct += sum([1 if (0.99*yval < mval < 1.01*yval) else 0 for (yval, mval) in zip(y, pred)])
 
     test_loss /= num_batches
     correct /= size
     print(f"Test Error: \nAccuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    return 100*correct
 
-#Main script
+#Setup the model
 model = NeuralNetwork()
 model.double()
-learning_rate = 1e-4
+learning_rate = 1e-3
 batch_size = 64
-epochs = 500
+epochs = 100000
 training_data = OptionsDataset(True)
 test_data = OptionsDataset(False)
 train_dataloader = DataLoader(training_data, batch_size=batch_size)
 test_dataloader = DataLoader(test_data, batch_size=batch_size)
 loss_fn = nn.MSELoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+model_trg_acc = 99
+model_acc = 0
 
+#Train the model
 for t in range(epochs):
-    print(f"Epoch {t+1}\n-------------------------------")
     train_loop(train_dataloader, model, loss_fn, optimizer)
-    test_loop(test_dataloader, model, loss_fn)
-print("Done!")
+    if (t+1) % 200 == 0:
+        print(f"Epoch {t+1}\n-------------------------------")
+        model_acc = test_loop(test_dataloader, model, loss_fn)
+        sys.stdout.flush()
+        torch.save(model.state_dict(), 'trained_model.pt')
+    if model_acc >= model_trg_acc:
+         break
+print("Finished training")
