@@ -63,6 +63,7 @@ dataset_out['strikes_std'] = strikes_std
 dataset_out['mat_times_std'] = mat_times_std
 dataset_out['vols_std'] = vols_std
 dataset_out['int_rates_std'] = int_rates_std
+dataset_out['call_prices'] = call_prices
 with open('Black-Sch-Data.pkl', 'wb') as file: 
           pickle.dump(dataset_out, file) 
 
