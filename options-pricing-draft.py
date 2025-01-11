@@ -10,6 +10,36 @@ from random import uniform
 import numpy as np
 import pickle
 import sys
+import QuantLib as ql
+
+#Get filenames from user to export data to
+training_set_fname = input('Enter filename (excluding .pkl) to save training data to: ')
+model_fname = input('Enter filename (excluding .pt) to save model to: ')
+
+#Function to calculate price of American options
+def amer_options_price(spot, strike, mat_time, int_rate, vol):
+    #Define Black-Scholes-Merton process
+    today = ql.Date().todaysDate()
+    riskFreeTS = ql.YieldTermStructureHandle(ql.FlatForward(today, int_rate, ql.Actual365Fixed()))
+    dividendTS = ql.YieldTermStructureHandle(ql.FlatForward(today, 0.0, ql.Actual365Fixed()))
+    volatility = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(today, ql.NullCalendar(), vol, ql.Actual365Fixed()))
+    initialValue = ql.QuoteHandle(ql.SimpleQuote(spot))
+    process = ql.BlackScholesMertonProcess(initialValue, dividendTS, riskFreeTS, volatility)
+
+    #Define the option
+    option_type = ql.Option.Call
+    payoff = ql.PlainVanillaPayoff(option_type, strike)
+    end_date = today + int(365*mat_time)
+    am_exercise = ql.AmericanExercise(today, end_date)
+    american_option = ql.VanillaOption(payoff, am_exercise)
+
+    #Define the pricing engine
+    xGrid = 200
+    tGrid = 2000
+    engine = ql.FdBlackScholesVanillaEngine(process, tGrid, xGrid)
+    american_option.setPricingEngine(engine)
+
+    return np.float64(american_option.NPV())
 
 #Option parameters
 num_samples = 35000
@@ -19,11 +49,18 @@ strikes = np.array([uniform(0.6*spots[p], 1.1*spots[p]) for p in range(0, num_sa
 mat_times = np.array([uniform(0.01, 2) for p in range(0, num_samples)])
 vols = np.array([uniform(0.1, 0.2) for p in range(0, num_samples)])
 int_rates = np.array([uniform(0.05, 0.20) for p in range(0, num_samples)])
+amer_options = True
 
 #Calculate Black-Scholes option prices
 call_prices = []
-for i in range(0, num_samples):
-	call_prices.append(black_scholes('c', spots[i], strikes[i], mat_times[i], int_rates[i], vols[i]))
+if not amer_options:
+    for i in range(0, num_samples):
+        call_prices.append(black_scholes('c', spots[i], strikes[i], mat_times[i], int_rates[i], vols[i]))
+else:
+    for i in range(0, num_samples):
+        if i % 1000 == 0 and i > 0:
+            print(f'Generating American Option Prices: {i} \n')
+        call_prices.append(amer_options_price(spots[i], strikes[i], mat_times[i], int_rates[i], vols[i]))
 
 #Calculate means
 spots_mean = spots.mean()
@@ -64,7 +101,7 @@ dataset_out['mat_times_std'] = mat_times_std
 dataset_out['vols_std'] = vols_std
 dataset_out['int_rates_std'] = int_rates_std
 dataset_out['call_prices'] = call_prices
-with open('Black-Sch-Data.pkl', 'wb') as file: 
+with open(training_set_fname + '.pkl', 'wb') as file: 
           pickle.dump(dataset_out, file) 
 
 #Defines a dataset as used by the model training algorithm
@@ -142,7 +179,7 @@ def test_loop(dataloader, model, loss_fn):
 #Setup the model
 model = NeuralNetwork()
 model.double()
-learning_rate = 1e-3
+learning_rate = 1e-4
 batch_size = 64
 epochs = 100000
 training_data = OptionsDataset(True)
@@ -161,7 +198,7 @@ for t in range(epochs):
         print(f"Epoch {t+1}\n-------------------------------")
         model_acc = test_loop(test_dataloader, model, loss_fn)
         sys.stdout.flush()
-        torch.save(model.state_dict(), 'trained_model.pt')
+        torch.save(model.state_dict(), model_fname + '.pt')
     if model_acc >= model_trg_acc:
          break
 print("Finished training")
